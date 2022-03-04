@@ -142,7 +142,7 @@ bool IncomingPacket::_doERROR(const RuntimeEnvironment *RR,void *tPtr,const Shar
 			if (inReVerb == Packet::VERB_NETWORK_CONFIG_REQUEST) {
 				const SharedPtr<Network> network(RR->node->network(at<uint64_t>(ZT_PROTO_VERB_ERROR_IDX_PAYLOAD)));
 				if ((network)&&(network->controller() == peer->address()))
-					network->setNotFound();
+					network->setNotFound(tPtr);
 			}
 			break;
 
@@ -153,7 +153,7 @@ bool IncomingPacket::_doERROR(const RuntimeEnvironment *RR,void *tPtr,const Shar
 			if (inReVerb == Packet::VERB_NETWORK_CONFIG_REQUEST) {
 				const SharedPtr<Network> network(RR->node->network(at<uint64_t>(ZT_PROTO_VERB_ERROR_IDX_PAYLOAD)));
 				if ((network)&&(network->controller() == peer->address()))
-					network->setNotFound();
+					network->setNotFound(tPtr);
 			}
 			break;
 
@@ -176,7 +176,7 @@ bool IncomingPacket::_doERROR(const RuntimeEnvironment *RR,void *tPtr,const Shar
 			// Network controller: network access denied.
 			const SharedPtr<Network> network(RR->node->network(at<uint64_t>(ZT_PROTO_VERB_ERROR_IDX_PAYLOAD)));
 			if ((network)&&(network->controller() == peer->address()))
-				network->setAccessDenied();
+				network->setAccessDenied(tPtr);
 		}	break;
 
 		case Packet::ERROR_UNWANTED_MULTICAST: {
@@ -191,25 +191,54 @@ bool IncomingPacket::_doERROR(const RuntimeEnvironment *RR,void *tPtr,const Shar
 		}	break;
 
 		case Packet::ERROR_NETWORK_AUTHENTICATION_REQUIRED: {
+			//fprintf(stderr, "\nPacket::ERROR_NETWORK_AUTHENTICATION_REQUIRED\n\n");
 			const SharedPtr<Network> network(RR->node->network(at<uint64_t>(ZT_PROTO_VERB_ERROR_IDX_PAYLOAD)));
 			if ((network)&&(network->controller() == peer->address())) {
-				bool noUrl = true;
 				int s = (int)size() - (ZT_PROTO_VERB_ERROR_IDX_PAYLOAD + 8);
 				if (s > 2) {
 					const uint16_t errorDataSize = at<uint16_t>(ZT_PROTO_VERB_ERROR_IDX_PAYLOAD + 8);
 					s -= 2;
 					if (s >= (int)errorDataSize) {
-						Dictionary<3072> authInfo(((const char *)this->data()) + (ZT_PROTO_VERB_ERROR_IDX_PAYLOAD + 10), errorDataSize);
-						char authenticationURL[2048];
-						if (authInfo.get("aU", authenticationURL, sizeof(authenticationURL)) > 0) {
-							authenticationURL[sizeof(authenticationURL) - 1] = 0; // ensure always zero terminated
-							network->setAuthenticationRequired(authenticationURL);
-							noUrl = false;
+						Dictionary<8192> authInfo(((const char *)this->data()) + (ZT_PROTO_VERB_ERROR_IDX_PAYLOAD + 10), errorDataSize);
+
+						uint64_t authVer = authInfo.getUI(ZT_AUTHINFO_DICT_KEY_VERSION, 0ULL);
+
+						if (authVer == 0) {
+							char authenticationURL[2048];
+
+							if (authInfo.get(ZT_AUTHINFO_DICT_KEY_AUTHENTICATION_URL, authenticationURL, sizeof(authenticationURL)) > 0) {
+								authenticationURL[sizeof(authenticationURL) - 1] = 0; // ensure always zero terminated
+								network->setAuthenticationRequired(tPtr, authenticationURL);
+							}
+						} else if (authVer == 1) {
+							char issuerURL[2048] = { 0 };
+							char centralAuthURL[2048] = { 0 };
+							char ssoNonce[64] = { 0 };
+							char ssoState[128] = {0};
+							char ssoClientID[256] = { 0 };
+
+							if (authInfo.get(ZT_AUTHINFO_DICT_KEY_ISSUER_URL, issuerURL, sizeof(issuerURL)) > 0) {
+								issuerURL[sizeof(issuerURL) - 1] = 0;
+							}
+							if (authInfo.get(ZT_AUTHINFO_DICT_KEY_CENTRAL_ENDPOINT_URL, centralAuthURL, sizeof(centralAuthURL))>0) {
+								centralAuthURL[sizeof(centralAuthURL) - 1] = 0;
+							}
+							if (authInfo.get(ZT_AUTHINFO_DICT_KEY_NONCE, ssoNonce, sizeof(ssoNonce)) > 0) {
+								ssoNonce[sizeof(ssoNonce) - 1] = 0;
+							}
+							if (authInfo.get(ZT_AUTHINFO_DICT_KEY_STATE, ssoState, sizeof(ssoState)) > 0) {
+								ssoState[sizeof(ssoState) - 1] = 0;
+							}
+							if (authInfo.get(ZT_AUTHINFO_DICT_KEY_CLIENT_ID, ssoClientID, sizeof(ssoClientID)) > 0) {
+								ssoClientID[sizeof(ssoClientID) - 1] = 0;
+							}
+
+							network->setAuthenticationRequired(tPtr, issuerURL, centralAuthURL, ssoClientID, ssoNonce, ssoState);
 						}
 					}
+				} else {
+					network->setAuthenticationRequired(tPtr, "");
 				}
-				if (noUrl)
-					network->setAuthenticationRequired("");
 			}
 		}	break;
 
@@ -1028,9 +1057,11 @@ bool IncomingPacket::_doNETWORK_CONFIG(const RuntimeEnvironment *RR,void *tPtr,c
 {
 	const SharedPtr<Network> network(RR->node->network(at<uint64_t>(ZT_PACKET_IDX_PAYLOAD)));
 	if (network) {
+		//fprintf(stderr, "IncomingPacket::_doNETWORK_CONFIG %.16llx\n", network->id());
 		const uint64_t configUpdateId = network->handleConfigChunk(tPtr,packetId(),source(),*this,ZT_PACKET_IDX_PAYLOAD);
 		if (configUpdateId) {
-			Packet outp(peer->address(),RR->identity.address(),Packet::VERB_OK);
+			//fprintf(stderr, "Have config update ID: %llu\n", configUpdateId);
+			Packet outp(peer->address(), RR->identity.address(), Packet::VERB_OK);
 			outp.append((uint8_t)Packet::VERB_ECHO);
 			outp.append((uint64_t)packetId());
 			outp.append((uint64_t)network->id());
@@ -1038,7 +1069,9 @@ bool IncomingPacket::_doNETWORK_CONFIG(const RuntimeEnvironment *RR,void *tPtr,c
 			const int64_t now = RR->node->now();
 			outp.armor(peer->key(),true,peer->aesKeysIfSupported());
 			peer->recordOutgoingPacket(_path,outp.packetId(),outp.payloadLength(),outp.verb(),ZT_QOS_NO_FLOW,now);
-			_path->send(RR,tPtr,outp.data(),outp.size(),RR->node->now());
+			if (!_path->send(RR,tPtr,outp.data(),outp.size(),RR->node->now())) {
+				//fprintf(stderr, "Error sending VERB_OK after NETWORK_CONFIG packet for %.16llx\n", network->id());
+			}
 		}
 	}
 

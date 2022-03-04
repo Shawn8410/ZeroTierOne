@@ -391,7 +391,7 @@ public:
 			++_credentialsCutoffCount;
 		else _credentialsCutoffCount = 0;
 		_lastCredentialsReceived = now;
-		return (_credentialsCutoffCount < ZT_PEER_CREDEITIALS_CUTOFF_LIMIT);
+		return (_credentialsCutoffCount < ZT_PEER_CREDENTIALS_CUTOFF_LIMIT);
 	}
 
 	/**
@@ -567,6 +567,8 @@ private:
 	_PeerPath _paths[ZT_MAX_PEER_NETWORK_PATHS];
 	Mutex _paths_m;
 	Mutex _bond_m;
+
+	bool _isLeaf;
 
 	Identity _id;
 

@@ -1,5 +1,5 @@
 Name:           zerotier-one
-Version:        1.8.4
+Version:        1.8.5
 Release:        1%{?dist}
 Summary:        ZeroTier network virtualization service
 
@@ -14,7 +14,7 @@ BuildRequires:  systemd
 BuildRequires:  systemd
 %endif
 
-Requires:       iproute libstdc++
+Requires:       iproute libstdc++ openssl
 
 %if 0%{?rhel} >= 7
 Requires:       systemd
@@ -121,6 +121,18 @@ case "$1" in
     chkconfig --add zerotier-one
   ;;
 esac
+if [ -x /usr/bin/checkmodule -a -x /usr/bin/semodule_package -a -x /usr/sbin/semodule ]; then
+  rm -f /var/lib/zerotier-one/zerotier-one.mod
+  /usr/bin/checkmodule -M -m -o /var/lib/zerotier-one/zerotier-one.mod /var/lib/zerotier-one/zerotier-one.te
+  if [ -f /var/lib/zerotier-one/zerotier-one.pp ]; then
+    rm -f /var/lib/zerotier-one/zerotier-one.pp
+    /usr/bin/semodule_package -o /var/lib/zerotier-one/zerotier-one.pp -m /var/lib/zerotier-one/zerotier-one.mod
+    /usr/sbin/semodule -u /var/lib/zerotier-one/zerotier-one.pp
+  else
+    /usr/bin/semodule_package -o /var/lib/zerotier-one/zerotier-one.pp -m /var/lib/zerotier-one/zerotier-one.mod
+    /usr/sbin/semodule -i /var/lib/zerotier-one/zerotier-one.pp
+  fi
+fi
 %endif
 
 %preun
@@ -152,6 +164,9 @@ esac
 %endif
 
 %changelog
+* Fri Dec 17 2021 Adam Ierymenko <adam.ierymenko@zerotier.com> - 1.8.5
+- see https://github.com/zerotier/ZeroTierOne for release notes
+
 * Tue Nov 23 2021 Adam Ierymenko <adam.ierymenko@zerotier.com> - 1.8.4
 - see https://github.com/zerotier/ZeroTierOne for release notes
 

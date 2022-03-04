@@ -518,6 +518,7 @@ class Bond {
 
   public:
 	void dumpInfo(int64_t now, bool force);
+	std::string pathToStr(const SharedPtr<Path>& path);
 	void dumpPathStatus(int64_t now, int pathIdx);
 
 	SharedPtr<Link> getLink(const SharedPtr<Path>& path);
@@ -761,6 +762,11 @@ class Bond {
 	void dequeueNextActiveBackupPath(uint64_t now);
 
 	/**
+	 * Zero all timers
+	 */
+	void initTimers();
+
+	/**
 	 * Set bond parameters to reasonable defaults, these may later be overwritten by
 	 * user-specified parameters.
 	 *
@@ -1000,12 +1006,12 @@ class Bond {
 	/**
 	 * @param policy Bonding policy for this bond
 	 */
-	/*
+
 	inline void setPolicy(uint8_t policy)
 	{
 		_policy = policy;
 	}
-*/
+
 	/**
 	 * @return the current bonding policy
 	 */
@@ -1134,10 +1140,10 @@ class Bond {
 	/**
 	 * Emit message to tracing system but with added timestamp and subsystem info
 	 *
-	 * TODO: Will be replaced when better logging facilities exist in Trace.hpp
 	 */
 	void log(const char* fmt, ...)
 	{
+#ifdef ZT_TRACE
 		time_t rawtime;
 		struct tm* timeinfo;
 		char timestamp[80];
@@ -1157,6 +1163,36 @@ class Bond {
 		va_end(args);
 		RR->t->bondStateMessage(NULL, traceMsg);
 #undef MAX_MSG_LEN
+#endif
+	}
+
+	/**
+	 * Emit message to tracing system but with added timestamp and subsystem info
+	 *
+	 */
+	void debug(const char* fmt, ...)
+	{
+#ifdef ZT_DEBUG
+		time_t rawtime;
+		struct tm* timeinfo;
+		char timestamp[80];
+		time(&rawtime);
+		timeinfo = localtime(&rawtime);
+		strftime(timestamp, 80, "%F %T", timeinfo);
+#define MAX_BOND_MSG_LEN 1024
+		char traceMsg[MAX_BOND_MSG_LEN];
+		char userMsg[MAX_BOND_MSG_LEN];
+		va_list args;
+		va_start(args, fmt);
+		if (vsnprintf(userMsg, sizeof(userMsg), fmt, args) < 0) {
+			fprintf(stderr, "Encountered format encoding error while writing to trace log\n");
+			return;
+		}
+		snprintf(traceMsg, MAX_BOND_MSG_LEN, "%s (%llx/%s) %s", timestamp, _peerId, _policyAlias.c_str(), userMsg);
+		va_end(args);
+		RR->t->bondStateMessage(NULL, traceMsg);
+#undef MAX_MSG_LEN
+#endif
 	}
 
   private:
@@ -1428,7 +1464,7 @@ class Bond {
 
 	// path negotiation
 	int16_t _localUtility;
-	int negotiatedPathIdx;
+	int _negotiatedPathIdx;
 	uint8_t _numSentPathNegotiationRequests;
 	bool _allowPathNegotiation;
 
@@ -1466,6 +1502,7 @@ class Bond {
 	unsigned char _freeRandomByte;	 // Free byte of entropy that is updated on every packet egress event.
 	SharedPtr<Peer> _peer;			 // Remote peer that this bond services
 	unsigned long long _peerId;		 // ID of the peer that this bond services
+	bool _isLeaf;
 
 	/**
 	 * Rate-limiting

@@ -9,7 +9,7 @@ ifeq ($(origin CXX),default)
         CXX:=$(shell if [ -e /opt/rh/devtoolset-8/root/usr/bin/g++ ]; then echo /opt/rh/devtoolset-8/root/usr/bin/g++; else echo $(CXX); fi)
 endif
 
-INCLUDES?=
+INCLUDES?=-Izeroidc/target
 DEFS?=
 LDLIBS?=
 DESTDIR?=
@@ -18,7 +18,7 @@ include objects.mk
 ONE_OBJS+=osdep/LinuxEthernetTap.o
 ONE_OBJS+=osdep/LinuxNetLink.o
 
-# for central controller builds
+# for central controller buildsk
 TIMESTAMP=$(shell date +"%Y%m%d%H%M")
 
 # Auto-detect miniupnpc and nat-pmp as well and use system libs if present,
@@ -45,15 +45,12 @@ endif
 # Trying to use dynamically linked libhttp-parser causes tons of compatibility problems.
 ONE_OBJS+=ext/http-parser/http_parser.o
 
-ifeq ($(ZT_DEBUG_TRACE),1)
-	DEFS+=-DZT_DEBUG_TRACE
-endif
-ifeq ($(ZT_TRACE),1)
-	DEFS+=-DZT_TRACE
-endif
-
 ifeq ($(ZT_RULES_ENGINE_DEBUGGING),1)
 	override DEFS+=-DZT_RULES_ENGINE_DEBUGGING
+endif
+
+ifeq ($(ZT_DEBUG_TRACE),1)
+	DEFS+=-DZT_DEBUG_TRACE
 endif
 
 # Build with address sanitization library for advanced debugging (clang)
@@ -64,6 +61,7 @@ ifeq ($(ZT_DEBUG),1)
 	override CFLAGS+=-Wall -Wno-deprecated -g -O -pthread $(INCLUDES) $(DEFS)
 	override CXXFLAGS+=-Wall -Wno-deprecated -g -O -std=c++11 -pthread $(INCLUDES) $(DEFS)
 	ZT_TRACE=1
+	RUSTFLAGS=
 	# The following line enables optimization for the crypto code, since
 	# C25519 in particular is almost UNUSABLE in -O0 even on a 3ghz box!
 node/Salsa20.o node/SHA512.o node/C25519.o node/Poly1305.o: CXXFLAGS=-Wall -O2 -g -pthread $(INCLUDES) $(DEFS)
@@ -73,6 +71,7 @@ else
 	CXXFLAGS?=-O3 -fstack-protector -fPIE
 	override CXXFLAGS+=-Wall -Wno-deprecated -std=c++11 -pthread $(INCLUDES) -DNDEBUG $(DEFS)
 	LDFLAGS=-pie -Wl,-z,relro,-z,now
+	RUSTFLAGS=--release
 endif
 
 ifeq ($(ZT_QNAP), 1)
@@ -96,6 +95,10 @@ ifeq ($(ZT_TRACE),1)
 	override DEFS+=-DZT_TRACE
 endif
 
+ifeq ($(ZT_DEBUG),1)
+	override DEFS+=-DZT_DEBUG
+endif
+
 ifeq ($(ZT_USE_TEST_TAP),1)
 	override DEFS+=-DZT_USE_TEST_TAP
 endif
@@ -114,6 +117,7 @@ ifeq ($(CC_MACH),x86_64)
 	ZT_USE_X64_ASM_ED25519=1
 	override CFLAGS+=-msse -msse2
 	override CXXFLAGS+=-msse -msse2
+	ZT_SSO_SUPPORTED=1
 endif
 ifeq ($(CC_MACH),amd64)
 	ZT_ARCHITECTURE=2
@@ -121,6 +125,7 @@ ifeq ($(CC_MACH),amd64)
 	ZT_USE_X64_ASM_ED25519=1
 	override CFLAGS+=-msse -msse2
 	override CXXFLAGS+=-msse -msse2
+	ZT_SSO_SUPPORTED=1
 endif
 ifeq ($(CC_MACH),powerpc64le)
 	ZT_ARCHITECTURE=8
@@ -142,15 +147,19 @@ ifeq ($(CC_MACH),e2k)
 endif
 ifeq ($(CC_MACH),i386)
 	ZT_ARCHITECTURE=1
+	ZT_SSO_SUPPORTED=1
 endif
 ifeq ($(CC_MACH),i486)
 	ZT_ARCHITECTURE=1
+	ZT_SSO_SUPPORTED=1
 endif
 ifeq ($(CC_MACH),i586)
 	ZT_ARCHITECTURE=1
+	ZT_SSO_SUPPORTED=1
 endif
 ifeq ($(CC_MACH),i686)
 	ZT_ARCHITECTURE=1
+	ZT_SSO_SUPPORTED=1
 endif
 ifeq ($(CC_MACH),arm)
 	ZT_ARCHITECTURE=3
@@ -166,6 +175,7 @@ ifeq ($(CC_MACH),armhf)
 	ZT_ARCHITECTURE=3
 	override DEFS+=-DZT_NO_TYPE_PUNNING
 	ZT_USE_ARM32_NEON_ASM_CRYPTO=1
+	ZT_SSO_SUPPORTED=1
 endif
 ifeq ($(CC_MACH),armv6)
 	ZT_ARCHITECTURE=3
@@ -209,10 +219,12 @@ ifeq ($(CC_MACH),armv7ve)
 endif
 ifeq ($(CC_MACH),arm64)
 	ZT_ARCHITECTURE=4
+	ZT_SSO_SUPPORTED=1
 	override DEFS+=-DZT_NO_TYPE_PUNNING -DZT_ARCH_ARM_HAS_NEON -march=armv8-a+crypto -mtune=generic -mstrict-align
 endif
 ifeq ($(CC_MACH),aarch64)
 	ZT_ARCHITECTURE=4
+	ZT_SSO_SUPPORTED=1
 	override DEFS+=-DZT_NO_TYPE_PUNNING -DZT_ARCH_ARM_HAS_NEON -march=armv8-a+crypto -mtune=generic -mstrict-align
 endif
 ifeq ($(CC_MACH),mipsel)
@@ -255,6 +267,14 @@ ifeq ($(ZT_IA32),1)
 	ZT_USE_X64_ASM_ED25519=0
 endif
 
+ifeq ($(ZT_SSO_SUPPORTED), 1)
+	ifeq ($(ZT_DEBUG),1)
+		LDLIBS+=zeroidc/target/debug/libzeroidc.a -ldl -lssl -lcrypto
+	else
+		LDLIBS+=zeroidc/target/release/libzeroidc.a -ldl -lssl -lcrypto
+	endif
+endif
+
 # Disable software updates by default on Linux since that is normally done with package management
 override DEFS+=-DZT_BUILD_PLATFORM=1 -DZT_BUILD_ARCHITECTURE=$(ZT_ARCHITECTURE) -DZT_SOFTWARE_UPDATE_DEFAULT="\"disable\""
 
@@ -274,7 +294,7 @@ endif
 
 ifeq ($(ZT_CONTROLLER),1)
 	override CXXFLAGS+=-Wall -Wno-deprecated -std=c++17 -pthread $(INCLUDES) -DNDEBUG $(DEFS)
-	override LDLIBS+=-L/usr/pgsql-10/lib/ -lpqxx -lpq ext/hiredis-0.14.1/lib/centos8/libhiredis.a ext/redis-plus-plus-1.1.1/install/centos8/lib/libredis++.a
+	override LDLIBS+=-L/usr/pgsql-10/lib/ -lpqxx -lpq ext/hiredis-0.14.1/lib/centos8/libhiredis.a ext/redis-plus-plus-1.1.1/install/centos8/lib/libredis++.a -lssl -lcrypto
 	override DEFS+=-DZT_CONTROLLER_USE_LIBPQ
 	override INCLUDES+=-I/usr/pgsql-10/include -Iext/hiredis-0.14.1/include/ -Iext/redis-plus-plus-1.1.1/install/centos8/include/sw/
 endif
@@ -321,6 +341,8 @@ zerotier-idtool: zerotier-one
 zerotier-cli: zerotier-one
 	ln -sf zerotier-one zerotier-cli
 
+$(ONE_OBJS): zeroidc
+
 libzerotiercore.a:	FORCE
 	make CFLAGS="-O3 -fstack-protector -fPIC" CXXFLAGS="-O3 -std=c++11 -fstack-protector -fPIC" $(CORE_OBJS)
 	ar rcs libzerotiercore.a $(CORE_OBJS)
@@ -339,7 +361,7 @@ manpages:	FORCE
 doc:	manpages
 
 clean: FORCE
-	rm -rf *.a *.so *.o node/*.o controller/*.o osdep/*.o service/*.o ext/http-parser/*.o ext/miniupnpc/*.o ext/libnatpmp/*.o $(CORE_OBJS) $(ONE_OBJS) zerotier-one zerotier-idtool zerotier-cli zerotier-selftest build-* ZeroTierOneInstaller-* *.deb *.rpm .depend debian/files debian/zerotier-one*.debhelper debian/zerotier-one.substvars debian/*.log debian/zerotier-one doc/node_modules ext/misc/*.o debian/.debhelper debian/debhelper-build-stamp docker/zerotier-one
+	rm -rf *.a *.so *.o node/*.o controller/*.o osdep/*.o service/*.o ext/http-parser/*.o ext/miniupnpc/*.o ext/libnatpmp/*.o $(CORE_OBJS) $(ONE_OBJS) zerotier-one zerotier-idtool zerotier-cli zerotier-selftest build-* ZeroTierOneInstaller-* *.deb *.rpm .depend debian/files debian/zerotier-one*.debhelper debian/zerotier-one.substvars debian/*.log debian/zerotier-one doc/node_modules ext/misc/*.o debian/.debhelper debian/debhelper-build-stamp docker/zerotier-one zeroidc/target
 
 distclean:	clean
 
@@ -360,6 +382,14 @@ central-controller-docker: FORCE
 debug:	FORCE
 	make ZT_DEBUG=1 one
 	make ZT_DEBUG=1 selftest
+
+ifeq ($(ZT_SSO_SUPPORTED), 1)
+zeroidc:	FORCE
+#	export PATH=/root/.cargo/bin:$$PATH; cd zeroidc && cargo build -j1 $(RUSTFLAGS)
+	export PATH=/root/.cargo/bin:$$PATH; cd zeroidc && cargo build $(RUSTFLAGS)
+else
+zeroidc:
+endif
 
 # Note: keep the symlinks in /var/lib/zerotier-one to the binaries since these
 # provide backward compatibility with old releases where the binaries actually
@@ -388,6 +418,7 @@ install:	FORCE
 	rm -f $(DESTDIR)/usr/share/man/man1/zerotier-cli.1.gz
 	cat doc/zerotier-cli.1 | gzip -9 >$(DESTDIR)/usr/share/man/man1/zerotier-cli.1.gz
 	cat doc/zerotier-idtool.1 | gzip -9 >$(DESTDIR)/usr/share/man/man1/zerotier-idtool.1.gz
+	cp ext/installfiles/linux/zerotier-one.te $(DESTDIR)/var/lib/zerotier-one/zerotier-one.te
 
 # Uninstall preserves identity.public and identity.secret since the user might
 # want to save these. These are your ZeroTier address.
@@ -424,5 +455,27 @@ centos-7-setup: FORCE
 	yum install -y gcc gcc-c++ make epel-release git
 	yum install -y centos-release-scl
 	yum install -y devtoolset-8-gcc devtoolset-8-gcc-c++
+
+snap-build-local: FORCE
+	snapcraft
+
+snap-install: FORCE
+	snap install zerotier_`git describe --tags --abbrev=0`_${SNAP_ARCH}.snap --dangerous
+
+snap-uninstall: FORCE
+	snap remove zerotier
+
+snap-build-remote: FORCE
+	snapcraft remote-build --build-on=amd64,arm64,s390x,ppc64el,armhf,i386
+
+snap-upload-beta: FORCE
+	for SNAPFILE in ./*.snap; do\
+		snapcraft upload --release=beta,edge,candidate $${SNAPFILE};\
+	done
+
+snap-upload-stable: FORCE
+	for SNAPFILE in ./*.snap; do\
+		snapcraft upload --release=stable $${SNAPFILE};\
+	done
 
 FORCE:
